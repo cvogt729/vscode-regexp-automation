@@ -1,0 +1,128 @@
+{
+    "name": "regexp",
+    "displayName": "RegExp Automation",
+    "description": "Facilitates automation of JavaScript flavored regular expressions.",
+    "version": "0.1.0",
+    "publisher":"cvogt729",
+    "license":"MIT",
+    "engines": {
+        "vscode": "^1.62.0"
+    },
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/cvogt729/vscode-regexp-automation"
+    },
+    "categories": [
+        "Other"
+    ],
+    "icon": "images/icon.png",
+    "keywords": [
+        "regex",
+        "regexp",
+        "regular expression",
+        "regular expressions",
+        "replace"
+    ],
+    "activationEvents": [
+        "onCommand:regexp.modifyCurrentDocument",
+        "onCommand:regexp.modifyOpenDocuments",
+        "onCommand:regexp.modifyWorkspaces",
+        "onCommand:regexp.modifyClipboard",
+        "onCommand:regexp.stringify"
+    ],
+    "main": "./out/extension.js",
+    "contributes": {
+        "commands": [
+            {
+                "command": "regexp.modifyActiveDocument",
+                "title": "Modify the active document",
+                "category": "RegExp"
+            },
+            {
+                "command": "regexp.modifySelections",
+                "title": "Modify selections in the active document",
+                "category": "RegExp"
+            },
+            {
+                "command": "regexp.modifyOpenDocuments",
+                "title": "Modify all open documents",
+                "category": "RegExp"
+            },
+            {
+                "command": "regexp.modifyWorkspaces",
+                "title": "Modify documents in all open workspaces",
+                "category": "RegExp"
+            },
+            {
+                "command": "regexp.modifyClipboard",
+                "title": "Modify clipboard contents",
+                "category": "RegExp"
+            },
+            {
+                "command": "regexp.stringify",
+                "title": "Stringify RegExp for JSON",
+                "category": "RegExp"
+            }
+        ],
+        "configuration": {
+            "title": "RegExp Automation",
+            "properties":{
+                "regexp":{
+                    "type":"object",
+                    "description":"Dictionary which contains groups of RegExp actions.",
+                    "patternProperties":{
+                        "^(?!get$|has$|inspect$|update$).+$":{
+                            "type":"array",
+                            "description":"List of RegExp actions.",
+                            "minItems":1,
+                            "items":{
+                                "anyOf":[
+                                    {
+                                        "type":"string",
+                                        "description":"Executes another RegExp action list."
+                                    },
+                                    {
+                                        "type":"object",
+                                        "description":"Executes a single RegExp replacement.",
+                                        "properties":{
+                                            "find":{
+                                                "type":"string",
+                                                "description":"Regular expression to match against."
+                                            },
+                                            "replace":{
+                                                "type":"string",
+                                                "description":"Replacement text for all RegExp matches."
+                                            },
+                                            "literal":{
+                                                "type":"boolean",
+                                                "description":"Specifies whether to perform the find-replace operation literally. The default value is false.",
+                                                "default":false
+                                            },
+                                            "flags":{
+                                                "type":"string",
+                                                "markdownDescription":"Specifies the flags parameter passed to the RegExp constructor. The default value is \"gm\" (global and multi-line). See [RegExp documentation](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Regular_Expressions#advanced_searching_with_flags) for more details.",
+                                                "default":"gm"
+                                            }
+                                        },
+                                        "additionalProperties":false,
+                                        "required":["find","replace"]
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    "additionalProperties":false
+                }
+            }
+        }
+    },
+    "scripts": {
+        "vscode:prepublish": "npm run compile",
+        "compile": "tsc -p ./",
+        "watch": "tsc -watch -p ./"
+    },
+    "devDependencies": {
+        "@types/node": "14.x",
+        "@types/vscode": "1.x"
+    }
+}
