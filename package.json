@@ -24,38 +24,45 @@
         "replace"
     ],
     "activationEvents": [
-        "onCommand:regexp.modifyCurrentDocument",
-        "onCommand:regexp.modifyOpenDocuments",
-        "onCommand:regexp.modifyWorkspaces",
-        "onCommand:regexp.modifyClipboard",
+        "onCommand:regexp.modify.document",
+        "onCommand:regexp.modify.documents",
+        "onCommand:regexp.modify.selections",
+        "onCommand:regexp.modify.workspaces",
+        "onCommand:regexp.modify.clipboard",
+        "onCommand:regexp.modify.paste",
         "onCommand:regexp.stringify"
     ],
     "main": "./out/extension.js",
     "contributes": {
         "commands": [
             {
-                "command": "regexp.modifyActiveDocument",
+                "command": "regexp.modify.document",
                 "title": "Modify the active document",
                 "category": "RegExp"
             },
             {
-                "command": "regexp.modifySelections",
+                "command": "regexp.modify.selections",
                 "title": "Modify selections in the active document",
                 "category": "RegExp"
             },
             {
-                "command": "regexp.modifyOpenDocuments",
+                "command": "regexp.modify.documents",
                 "title": "Modify all open documents",
                 "category": "RegExp"
             },
             {
-                "command": "regexp.modifyWorkspaces",
+                "command": "regexp.modify.workspaces",
                 "title": "Modify documents in all open workspaces",
                 "category": "RegExp"
             },
             {
-                "command": "regexp.modifyClipboard",
+                "command": "regexp.modify.clipboard",
                 "title": "Modify clipboard contents",
+                "category": "RegExp"
+            },
+            {
+                "command": "regexp.modify.paste",
+                "title": "Paste modified clipboard contents without altering clipboard",
                 "category": "RegExp"
             },
             {
@@ -69,21 +76,27 @@
             "properties":{
                 "regexp":{
                     "type":"object",
-                    "description":"Dictionary which contains groups of RegExp actions.",
+                    "description":"Dictionary which contains named RegExp actions.",
+                    "additionalProperties":false,
                     "patternProperties":{
                         "^(?!get$|has$|inspect$|update$).+$":{
                             "type":"array",
-                            "description":"List of RegExp actions.",
+                            "description":"Contains a list of individual RegExps and/or references to other named RegExp actions. May include an optional description.",
                             "minItems":1,
+                            "default":[
+                                { "description":"" },
+                                {
+                                    "find":"",
+                                    "replace":"",
+                                    "literal":false,
+                                    "flags":"gm"
+                                }
+                            ],
                             "items":{
                                 "anyOf":[
                                     {
-                                        "type":"string",
-                                        "description":"Executes another RegExp action list."
-                                    },
-                                    {
                                         "type":"object",
-                                        "description":"Executes a single RegExp replacement.",
+                                        "description":"Executes a single RegExp. Supports properties: find, replace, literal, flags.",
                                         "properties":{
                                             "find":{
                                                 "type":"string",
@@ -106,12 +119,27 @@
                                         },
                                         "additionalProperties":false,
                                         "required":["find","replace"]
+                                    },
+                                    {
+                                        "type":"string",
+                                        "description":"Executes the RegExp action with the given name."
+                                    },
+                                    {
+                                        "type":"object",
+                                        "description":"A brief description of this RegExp action.",
+                                        "properties":{
+                                            "description":{
+                                                "type":"string",
+                                                "description":"A brief description of this RegExp action."
+                                            }
+                                        },
+                                        "additionalProperties":false,
+                                        "required":["description"]
                                     }
                                 ]
                             }
                         }
-                    },
-                    "additionalProperties":false
+                    }
                 }
             }
         }

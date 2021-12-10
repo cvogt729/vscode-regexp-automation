@@ -36,6 +36,19 @@ class Action {
     this.config = config;
   }
   /**
+   * Shows an error message with options to either abort or continue.
+   * @return Promise resolving to true if the continue option is selected; false otherwise.
+   */
+  private static async showErrorMessage(msg:string):Promise<Boolean>{
+    return (await vscode.window.showErrorMessage(msg, "Abort", "Continue"))==="Continue";
+  }
+  /**
+   * @return the number of RegExp objects encapsulated by this Action.
+   */
+  public size():number {
+    return this.find.length;
+  }
+  /**
    * Applies a sequence of regular expressions to the input string.
    */
   public apply(str:string):string {
@@ -56,23 +69,25 @@ class Action {
   /**
    * @param list JSON list specifying regular expressions to add to this action.
    * @param tracker Records names of referenced RegExp lists to prevent infinite loops.
-   * @return Promise resolving to this Action when all error messages have been dismissed.
+   * @return Promise resolving to true on success or false if the user has selected the 'abort' option
    */
-  public async appendList(list:any[], tracker?:string[]):Promise<Action> {
+  public async appendList(list:any[], tracker?:string[]):Promise<Boolean> {
     if (!tracker){
       tracker = [];
     }
     for (const x of list){
-      await this.append(x, tracker.slice());
+      if (!await this.append(x, tracker.slice())){
+        return false;
+      }
     }
-    return this;
+    return true;
   }
   /**
    * @param x either the name of a RegExp list specified in settings.json, or a JSON dictionary specifying a single RegExp.
    * @param tracker Records names of referenced RegExp lists to prevent infinite loops.
-   * @return Promise resolving to this Action when all error messages have been dismissed.
+   * @return Promise resolving to true on success and false if the user has selected the 'abort' option
    */
-  public async append(x:any, tracker?:string[]):Promise<Action> {
+  public async append(x:any, tracker?:string[]):Promise<Boolean> {
     if (typeof(x)==="string"){
       //x specifies the name of another RegExp list specified in settings.json
       if (!tracker){
@@ -84,16 +99,19 @@ class Action {
         var data:any[]|undefined = this.config.data[x];
         if (data && typeof(data)==="object"){
           //append the specified RegExp list
-          await this.appendList(data, tracker);
+          return this.appendList(data, tracker)
         }else if (this.missingActions){
           this.missingActions = this.missingActions.concat(", ", x);
         }else{
           this.missingActions = x;
         }
       }else{
-        await vscode.window.showErrorMessage("Infinite loop detected in RegExp action: "+x);
+        return Action.showErrorMessage("Infinite loop detected in RegExp action: "+x);
       }
     }else{
+      if (x["description"]){
+        return true;
+      }
       var find:string = x["find"];
       var replace:string = x["replace"];
       //check that 'find' and 'replace' properties are defined
@@ -113,21 +131,23 @@ class Action {
           this.appendRegExp(new RegExp(find, flags), replace);
         }catch(err:any){
           //catches invalid RegExp errors
-          await vscode.window.showErrorMessage(err.message);
+          return Action.showErrorMessage(err.message);
         }
       }else{
-        await vscode.window.showErrorMessage("'find' and 'replace' are required: "+JSON.stringify(x));
+        return Action.showErrorMessage("'find' and 'replace' are required: "+JSON.stringify(x));
       }
     }
-    return this;
+    return true;
   }
   /**
-   * This method shows an error message including all RegExp list references that could not be located.
-   * @return Promise resolving when the error has been dismissed (or resolving immediately if there are no errors).
+   * Shows an error message including all RegExp list references that could not be located with options to either abort or continue.
+   * @return Promise resolving to true if the continue option is selected; false otherwise.
    */
-  public async showMissingActions(){
+  public async showMissingActions():Promise<Boolean>{
     if (this.missingActions){
-      await vscode.window.showErrorMessage(this.missingActions+" RegExp action(s) cannot be found.");
+      return Action.showErrorMessage(this.missingActions+" RegExp action(s) cannot be found.");
+    }else{
+      return true;
     }
   }
 }
@@ -149,19 +169,71 @@ async function selectAndAppend(config:Config, action:Action):Promise<Boolean>{
     vscode.window.showErrorMessage("No RegExp actions have been defined.");
     return false;
   }else{
+    //Add descriptive text to each option when specified
+    const opts:vscode.QuickPickItem[] = [];
+    for (const key of options){
+      const arr = <any[]>config.data[key];
+      var b = true;
+      for (const x of arr){
+        if (x["description"]){
+          opts.push({
+            label:key,
+            description:x["description"]
+          });
+          b = false;
+          break;
+        }
+      }
+      if (b){
+        opts.push({
+          label:key
+        });
+      }
+    }
     //Let the user select a RegExp list from the available options
-    const ret = await vscode.window.showQuickPick(options, {
-      title:"RegExp Action List",
+    const ret = await vscode.window.showQuickPick(opts, {
+      title:"RegExp Action Chooser",
       canPickMany:false
     });
     if (ret){
       //Append the selected RegExp list to the Action
-      await action.append(ret);
+      await action.append(ret.label);
       return true;
     }else{
       return false;
     }
   }
+}
+/**
+ * Loads an action using the specified ConfigurationScope and arguments.
+ * @return Promise resolving to an Action if successful, or undefined on failure.
+ */
+async function loadAction(scope:vscode.ConfigurationScope|undefined, args: any[]):Promise<Action|undefined>{
+  //Retrieve extension settings at the selected scope
+  const config = new Config(scope);
+  //Construct an empty Action
+  const action = new Action(config);
+  if (args.length===0){
+    if (!await selectAndAppend(config,action)){
+      return undefined;
+    }
+  }else{
+    //Append all arguments to the Action
+    for (const x of args){
+      if (!await action.appendList(x)){
+        return undefined;
+      }
+    }
+  }
+  //Show named RegExp list references that could not be resolved
+  if (!await action.showMissingActions()){
+    return undefined;
+  }
+  if (action.size()==0){
+    await vscode.window.showErrorMessage("RegExp action is empty!");
+    return undefined;
+  }
+  return action;
 }
 /**
  * Extension entry point.
@@ -194,54 +266,77 @@ export function activate(context: vscode.ExtensionContext) {
       }
     }
   ));
-  context.subscriptions.push(vscode.commands.registerCommand("regexp.modifyClipboard",
+  context.subscriptions.push(vscode.commands.registerCommand("regexp.modify.clipboard",
     async (...args: any[])=>{
-      //Retrieve extension settings at the scope of the active text editor
-      const config = new Config(vscode.window.activeTextEditor?.document);
-      //Construct an empty Action
-      const action = new Action(config);
-      if (args.length===0){
-        if (!(await selectAndAppend(config,action))){
-          return;
-        }
-      }else{
-        //Append all arguments to the Action
-        for (const x of args){
-          await action.appendList(x);
+      const action = await loadAction(vscode.window.activeTextEditor?.document, args);
+      if (action){
+        await vscode.env.clipboard.writeText(action.apply(await vscode.env.clipboard.readText()));
+        await vscode.window.showInformationMessage("Clipboard contents modified.");
+      }
+    }
+  ));
+  context.subscriptions.push(vscode.commands.registerTextEditorCommand("regexp.modify.paste",
+    async (editor: vscode.TextEditor, _: vscode.TextEditorEdit, ...args: any[])=>{
+      const action = await loadAction(editor.document, args);
+      if (action){
+        const str = action.apply(await vscode.env.clipboard.readText());
+        //must initiate a new edit because this method is executing asynchronously
+        if (!await editor.edit(
+          (edit:vscode.TextEditorEdit) => {
+            for (const selection of editor.selections){
+              edit.replace(selection, str)
+            }
+          }
+        )){
+          await vscode.window.showInformationMessage("Operation failed.");
         }
       }
-      //Modify clipboard contents
-      await vscode.env.clipboard.writeText(action.apply(await vscode.env.clipboard.readText()));
-      //Show named RegExp list references that could not be resolved
-      await action.showMissingActions();
-      vscode.window.showInformationMessage("Clipboard contents modified.");
     }
   ));
-  /*  TODO
-    consider adding command to paste modified clipboard contents without actually changing the clipboard
-    delete editProvider.ts
-    consider terminating right away if any errors occur (instead of using async to show multiple errors)
-    just delete the fork of the other replacerules extension
-    since this is a total rewrite, make it as an independent repository
-  */
-  context.subscriptions.push(vscode.commands.registerCommand("regexp.modifyOpenDocuments",
+  context.subscriptions.push(vscode.commands.registerTextEditorCommand("regexp.modify.selections",
+    async (editor: vscode.TextEditor, _: vscode.TextEditorEdit, ...args: any[])=>{
+      const action = await loadAction(editor.document, args);
+      if (action){
+        //must initiate a new edit because this method is executing asynchronously
+        if (!await editor.edit(
+          (edit:vscode.TextEditorEdit) => {
+            for (const selection of editor.selections){
+              edit.replace(selection, action.apply(editor.document.getText(selection)))
+            }
+          }
+        )){
+          await vscode.window.showInformationMessage("Operation failed.");
+        }
+      }
+    }
+  ));
+  context.subscriptions.push(vscode.commands.registerTextEditorCommand("regexp.modify.document",
+    async (editor: vscode.TextEditor, _: vscode.TextEditorEdit, ...args: any[])=>{
+      const action = await loadAction(editor.document, args);
+      if (action){
+        const doc = editor.document;
+        const lastLine = doc.lineCount-1;
+        const r = new vscode.Range(0, 0, lastLine, doc.lineAt(lastLine).rangeIncludingLineBreak.end.character);
+        const str = action.apply(doc.getText());
+        //must initiate a new edit because this method is executing asynchronously
+        if (!await editor.edit(
+          (edit:vscode.TextEditorEdit) => {
+            edit.replace(r, str);
+          }
+        )){
+          await vscode.window.showInformationMessage("Operation failed.");
+        }
+      }
+    }
+  ));
+  context.subscriptions.push(vscode.commands.registerCommand("regexp.modify.documents",
     async (...args: any[])=>{
 
     }
   ));
-  context.subscriptions.push(vscode.commands.registerCommand("regexp.modifyWorkspaces",
+  context.subscriptions.push(vscode.commands.registerCommand("regexp.modify.workspaces",
     async (...args: any[])=>{
 
-    }
-  ));
-  context.subscriptions.push(vscode.commands.registerTextEditorCommand("regexp.modifySelections",
-    async (editor: vscode.TextEditor, edit: vscode.TextEditorEdit, ...args: any[])=>{
-      
-    }
-  ));
-  context.subscriptions.push(vscode.commands.registerTextEditorCommand("regexp.modifyActiveDocument",
-    async (editor: vscode.TextEditor, edit: vscode.TextEditorEdit, ...args: any[])=>{
-      
     }
   ));
 
@@ -287,9 +382,5 @@ export function activate(context: vscode.ExtensionContext) {
     }
 
   */
-  
-
-
-  //TODO - add command regexp.modifyWorkspace
 }
 export function deactivate(){}
