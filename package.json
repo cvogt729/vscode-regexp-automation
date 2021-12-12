@@ -74,7 +74,14 @@
         "configuration": {
             "title": "RegExp Automation",
             "properties":{
-                "regexp":{
+                "regexp.args":{
+                    "type":"object",
+                    "description":"Dictionary of command parameters.",
+                    "propertyNames":{
+                        "pattern":"^(?!get$|has$|inspect$|update$).+$"
+                    }
+                },
+                "regexp.actions":{
                     "type":"object",
                     "description":"Dictionary which contains named RegExp actions.",
                     "additionalProperties":false,
@@ -113,7 +120,7 @@
                                             },
                                             "flags":{
                                                 "type":"string",
-                                                "markdownDescription":"Specifies the flags parameter passed to the RegExp constructor. The default value is \"gm\" (global and multi-line). See [RegExp documentation](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Regular_Expressions#advanced_searching_with_flags) for more details.",
+                                                "markdownDescription":"Specifies the flags parameter passed to the RegExp constructor. The global flag will be appended if not included. The default value is \"gm\" (global and multi-line). See [RegExp documentation](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Guide/Regular_Expressions#advanced_searching_with_flags) for more details.",
                                                 "default":"gm"
                                             }
                                         },
@@ -150,7 +157,7 @@
         "watch": "tsc -watch -p ./"
     },
     "devDependencies": {
-        "@types/node": "14.x",
+        "@types/node": "16.x",
         "@types/vscode": "1.x"
     }
 }
