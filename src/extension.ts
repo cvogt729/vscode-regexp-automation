@@ -26,10 +26,15 @@ class Templates {
     this.resource = resource;
   }
   public async get(key:string, reload?:boolean):Promise<string>{
-    if (reload || !this.dict[key]){
-      this.dict[key] = await this.load(key);
+    var ret:string = this.dict[key];
+    if (reload || !ret){
+      ret = await this.load(key);
+      //Only cache expansions when the key length is less than 64
+      if (key.length<64){
+        this.dict[key] = ret;
+      }
     }
-    return this.dict[key];
+    return ret;
   }
   private async load(substr:string):Promise<string>{
     const i = substr.indexOf(':');
@@ -99,24 +104,38 @@ class Templates {
             add way to invoke further replacements on subexpressions
               ${regexp:name:text}
               make $ escape } so that } can be included in text if necessary
+              have reserved name 'this' to optimize Templates
+                edit package.json to prevent action name 'this'
             make replace property optional in settings (default to the empty string)
-            make command that takes input text and args, returning the replaced text without editing any files
-            add command to take text from one file and place it in another
+            make command that takes input text and args, returning the replaced text without editing any files (regexp.modify.string)
+            add support for recursing into named capturing group replacements. e.g, we could use $<key:$1>
+            add command to take text from one file and place it in another (regexp.transfer)
               params
-                file = path to input file
-                outFileGlob = specifies many output files
-                  use additional properties to filter files as well
-                  maybe list of RegExp find strings that all must match each filename
-                inMatcher = RegExp find string
-                outMatcher = RegExp find string
-                replace = replacement string
-              use the inMatcher on file contents and retrieve the first RegExpMatchArray
-              for each outFile matching the glob, loops through all outMatcher matches
-              combine the RegExpMatchArrays from the inMatcher and outMatcher
-                e.g, add the numbered outMatcher groups after the inMatcher numbered groups
-                combine the named capturing groups when possible
-              use the replacement string with this combo RegExpMatchArray
-                the given resource Uri should be from the outFile
+                inGlobInclude, inGlobExclude, inNameRegex
+                outGlobInclude, outGlobExclude, outNameRegex
+                inMatchers = array of dictionaries = [
+                  {
+                    "find":"^ *(\w+) *= *(\w+) *$",
+                    "groups":[
+                      {
+                        "name":"var_$1",
+                        "value":"${regexp:formatValue:$2}"
+                      },
+                      ...
+                    ]
+                  },
+                  ...
+                ]
+                outMatchers = standard RegExp format = [
+                  {
+                    "find":"^( *)(\w+)( *= *)\w*( *)$",
+                    "replace":"$1$2$3$<var_$2>$4"
+                  },
+                  ...
+                ]
+              if no globs/nameRegex is given, we should only mess with the active text editor
+              might as well have $ escape the closing > inside recursed named group replacement expansions
+              essentially doing regexp.modify.workspaces with an additional step of collecting named capturing groups
               
           */
           
