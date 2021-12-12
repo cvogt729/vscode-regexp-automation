@@ -1,13 +1,251 @@
 import * as vscode from 'vscode';
-//import * as path from 'path';
+import * as path from 'path';
 //import {TextEncoder, TextDecoder} from 'util';
 /**
  * Encapsulates the relevant section of settings.json
  */
 class Config {
   public data:vscode.WorkspaceConfiguration;
+  public resource:vscode.Uri|undefined;
   public constructor(scope?:vscode.ConfigurationScope|null|undefined){
-    this.data = vscode.workspace.getConfiguration("regexp", scope);
+    if (scope===null || scope===undefined){
+      scope = vscode.window.activeTextEditor?.document;
+    }
+    this.data = vscode.workspace.getConfiguration("regexp.actions", scope);
+    if (scope===undefined || scope instanceof vscode.Uri){
+      this.resource = scope;
+    }else{
+      this.resource = scope.uri;
+    }
+  }
+}
+class Templates {
+  private dict:Record<string,string> = {};
+  private resource:vscode.Uri|undefined;
+  constructor(resource:vscode.Uri|undefined){
+    this.resource = resource;
+  }
+  public async get(key:string, reload?:boolean):Promise<string>{
+    if (reload || !this.dict[key]){
+      this.dict[key] = await this.load(key);
+    }
+    return this.dict[key];
+  }
+  private async load(substr:string):Promise<string>{
+    const i = substr.indexOf(':');
+    if (i==-1){
+      switch (substr){
+        case "workspaceFolder":{
+          if (!this.resource){ return ""; }
+          const v = vscode.workspace.getWorkspaceFolder(this.resource)?.uri.fsPath;
+          return v || "";
+        }
+        case "workspaceFolderBasename":{
+          if (!this.resource){ return ""; }
+          const v = vscode.workspace.getWorkspaceFolder(this.resource)?.uri.fsPath;
+          return v?path.basename(v):"";
+        }
+        case "file":{
+          return this.resource?.fsPath || "";
+        }
+        case "relativeFile":{
+          if (!this.resource){ return ""; }
+          const v = vscode.workspace.getWorkspaceFolder(this.resource)?.uri.fsPath;
+          return v?path.relative(v, this.resource.fsPath):"";
+        }
+        case "fileDirname":{
+          return this.resource?path.dirname(this.resource.fsPath):"";
+        }
+        case "relativeFileDirname":{
+          if (!this.resource){ return ""; }
+          const v = vscode.workspace.getWorkspaceFolder(this.resource)?.uri.fsPath;
+          return v?path.relative(v, path.dirname(this.resource.fsPath)):"";
+        }
+        case "fileBasename":{
+          return this.resource?path.basename(this.resource.fsPath):"";
+        }
+        case "fileBasenameNoExtension":{
+          return this.resource?path.basename(this.resource.fsPath, path.extname(this.resource.fsPath)):"";
+        }
+        case "fileExtname":{
+          return this.resource?path.extname(this.resource.fsPath):"";
+        }
+        case "lineNumber":{
+          const v = vscode.window.activeTextEditor?.selection.start.line;
+          return v?(v+1).toString():"";
+        }
+        case "selectedText":{
+          const editor = vscode.window.activeTextEditor;
+          return editor?editor.document.getText(editor.selection):"";
+        }
+        case "pathSeparator":{
+          return path.sep;
+        }
+        case "clipboard":{
+          return await vscode.env.clipboard.readText();
+        }
+        case "cwd":{
+          return process.cwd();
+        }
+        case "version":{
+          return vscode.version;
+        }
+        case "defaultBuildTask":{
+          //TODO
+          
+        }
+        default:{
+          //@ts-ignore
+          const x = vscode.env[substr];
+          if (typeof(x)==="string"){
+            return x;
+          }
+        }
+      }
+    }else{
+      const key = substr.substring(0,i);
+      const value = substr.substring(i+1);
+      switch (key){
+        case "workspaceFolder":{
+          const folders = vscode.workspace.workspaceFolders;
+          if (folders){
+            for (const f of folders){
+              if (f.name===value){
+                return f.uri.fsPath;
+              }
+            }
+          }
+          return "";
+        }
+        case "env":{
+          return process.env[value] || "";
+        }
+        case "config":{
+          const j = value.lastIndexOf('.');
+          var v:string|undefined;
+          if (j==-1){
+            v = vscode.workspace.getConfiguration(undefined, this.resource).get(value);
+          }else{
+            v = vscode.workspace.getConfiguration(value.substring(0,j), this.resource).get(value.substring(j+1));
+          }
+          return v || "";
+        }
+        case "command":{
+          const j = value.indexOf(':');
+          if (j==-1){
+            const v = await vscode.commands.executeCommand(value);
+            return typeof(v)==="string"?v:"";
+          }else{
+            const v = await vscode.commands.executeCommand(value.substring(0,j), vscode.workspace.getConfiguration("regexp.args", this.resource)[value.substring(j+1)]);
+            return typeof(v)==="string"?v:"";
+          }
+        }
+      }
+    }
+    return "";
+  }
+}
+class FindReplace {
+  public find:RegExp;
+  public replace:string;
+  public literal:boolean = false;
+  constructor(find:RegExp, replace:string, literal?:boolean){
+    this.find = find;
+    this.replace = replace;
+    if (literal){
+      this.literal = true;
+    }
+  }
+  private static readonly numMatcher = /\d/;
+  /**
+   * This method formats a replacement string based on the data from a given RegExp match.
+   */
+  public async format(match:RegExpMatchArray, templates:Templates):Promise<string> {
+    if (this.literal){
+      return this.replace;
+    }
+    const len = this.replace.length;
+    var i = 0;
+    var c:string;
+    const func = async (returnOnBracket:boolean):Promise<string> => {
+      var ret = "";
+      for (;i<len;++i){
+        c = this.replace.charAt(i);
+        if (c==='$'){
+          if (++i<len){
+            switch (this.replace.charAt(i)){
+              case '$':{
+                ret+='$';
+                break;
+              }
+              case '&':{
+                ret+=match[0];
+                break;
+              }
+              case '`':{
+                ret+=match.input!.substring(0, match.index!);
+                break;
+              }
+              case '\'':{
+                ret+=match.input!.substring(match[0].length+match.index!);
+                break;
+              }
+              case '<':{
+                const j = i;
+                i = this.replace.indexOf('>', i+1)
+                if (i==-1){
+                  i = j;
+                }else{
+                  if (match.groups){
+                    const v = match.groups[this.replace.substring(j+1,i)];
+                    if (v){ ret+=v; }
+                  }
+                }
+                break;
+              }
+              case '{':{
+                ++i;
+                let innerStr = await func(true);
+                let reload = false;
+                if (innerStr.length>0 && innerStr.charAt(0)==='@'){
+                  reload = true;
+                  innerStr = innerStr.substring(1);
+                }
+                ret+=await templates.get(innerStr, reload);
+                break;
+              }
+              default:{
+                const j = i;
+                for (;i<len;++i){
+                  if (!FindReplace.numMatcher.test(this.replace.charAt(i))){
+                    break;
+                  }
+                }
+                if (i!=j){
+                  const v = match[parseInt(this.replace.substring(j,i), 10)];
+                  if (v){ ret+=v; }
+                }
+                --i;
+              }
+            }
+          }
+        }else if (returnOnBracket && c==='}'){
+          break;
+        }else{
+          ret+=c;
+        }
+      }
+      return ret;
+    };
+    return await func(false);
+  }
+}
+class Replacement {
+  public range:vscode.Range;
+  public text:string;
+  constructor(range:vscode.Range, text:string){
+    this.range = range;
+    this.text = text;
   }
 }
 /**
@@ -18,14 +256,12 @@ class Config {
 class Action {
   /** Used to escape RegExp strings for literal usage */
   private static readonly literalFind = /[.*+?^${}()|[\]\\]/g;
-  /** Used to escape replacement strings for literal usage */
-  private static readonly literalReplace = /\$/g;
   /** Specifies the relevant section of settings.json */
   private config:Config;
-  /** An array of regular expressions */
-  private find:RegExp[] = [];
-  /** An array of replacement strings */
-  private replace:string[] = [];
+  /** Keeps track of expanded replacements to reduce the total number of expansions. */
+  private templates:Templates;
+  /** An array of RegExp find/replace operations */
+  private arr:FindReplace[] = [];
   /**
    * Accumulates a list of missing actions.
    * Instead of displaying many error messages (one for each missing action),
@@ -34,6 +270,7 @@ class Action {
   private missingActions:string|undefined = undefined;
   public constructor(config:Config){
     this.config = config;
+    this.templates = new Templates(this.config.resource);
   }
   /**
    * Shows an error message with options to either abort or continue.
@@ -46,24 +283,65 @@ class Action {
    * @return the number of RegExp objects encapsulated by this Action.
    */
   public size():number {
-    return this.find.length;
+    return this.arr.length;
+  }
+  /**
+   * Resets the template with the given resource.
+   */
+  public resetTemplate(resource?:vscode.Uri):void{
+    this.templates = new Templates(resource || this.config.resource);
   }
   /**
    * Applies a sequence of regular expressions to the input string.
    */
-  public apply(str:string):string {
-    for (var i=0;i<this.find.length;++i){
-      str = str.replace(this.find[i], this.replace[i]);
+  public async apply(str:string):Promise<string> {
+    for (const x of this.arr){
+      var ret = "";
+      var i = 0;
+      for (const m of str.matchAll(x.find)){
+        ret+=str.substring(i, m.index!);
+        i = m.index!+m[0].length;
+        ret+=await x.format(m, this.templates);
+      }
+      ret+=str.substring(i);
+      str = ret;
     }
     return str;
+  }
+  /**
+   * Applies a sequence of regular expressions to the specified Range of the given TextEditor.
+   * @return Promise<Boolean> indicating success.
+   */
+  public async applyToEditor(editor:vscode.TextEditor):Promise<Boolean> {
+    const doc = editor.document;
+    for (const x of this.arr){
+      const text = doc.getText();
+      const replacements:Replacement[] = [];
+      for (const match of text.matchAll(x.find)){
+        replacements.push(new Replacement(new vscode.Range(doc.positionAt(match.index!), doc.positionAt(match.index!+match[0].length)), await x.format(match, this.templates)));
+      }
+      if (!await editor.edit(
+        (editBuilder:vscode.TextEditorEdit) => {
+          for (const r of replacements){
+            editBuilder.replace(r.range, r.text);
+          }
+        },
+        {
+          undoStopBefore:false,
+          undoStopAfter:false
+        }
+      )){
+        return false;
+      }
+    }
+    return true;
   }
   /**
    * Appends a regular expression find/replace operation to this Action.
    * @return this Action.
    */
-  public appendRegExp(regexp:RegExp, replace:string):Action {
-    this.find.push(regexp);
-    this.replace.push(replace);
+  public appendRegExp(op:FindReplace):Action {
+    this.arr.push(op);
     return this;
   }
   /**
@@ -120,15 +398,16 @@ class Action {
         if (!flags){
           //if flags is unspecified, then use global and multi-line
           flags = "gm";
+        }else if (flags.indexOf('g')==-1){
+          flags+='g';
         }
         if (x["literal"]){
           //if literal===true, then escape the RegExp find/replace strings
           find = find.replace(Action.literalFind, "\\$&");
-          replace = replace.replace(Action.literalReplace, "$$$&");
         }
         //append the specified RegExp
         try{
-          this.appendRegExp(new RegExp(find, flags), replace);
+          this.appendRegExp(new FindReplace(new RegExp(find, flags), replace, x["literal"]));
         }catch(err:any){
           //catches invalid RegExp errors
           return Action.showErrorMessage(err.message);
@@ -229,6 +508,7 @@ async function loadAction(scope:vscode.ConfigurationScope|undefined, args: any[]
   if (!await action.showMissingActions()){
     return undefined;
   }
+  //Check that action is non-empty
   if (action.size()==0){
     await vscode.window.showErrorMessage("RegExp action is empty!");
     return undefined;
@@ -270,7 +550,7 @@ export function activate(context: vscode.ExtensionContext) {
     async (...args: any[])=>{
       const action = await loadAction(vscode.window.activeTextEditor?.document, args);
       if (action){
-        await vscode.env.clipboard.writeText(action.apply(await vscode.env.clipboard.readText()));
+        await vscode.env.clipboard.writeText(await action.apply(await vscode.env.clipboard.readText()));
         await vscode.window.showInformationMessage("Clipboard contents modified.");
       }
     }
@@ -279,8 +559,7 @@ export function activate(context: vscode.ExtensionContext) {
     async (editor: vscode.TextEditor, _: vscode.TextEditorEdit, ...args: any[])=>{
       const action = await loadAction(editor.document, args);
       if (action){
-        const str = action.apply(await vscode.env.clipboard.readText());
-        //must initiate a new edit because this method is executing asynchronously
+        const str = await action.apply(await vscode.env.clipboard.readText());
         if (!await editor.edit(
           (edit:vscode.TextEditorEdit) => {
             for (const selection of editor.selections){
@@ -297,11 +576,14 @@ export function activate(context: vscode.ExtensionContext) {
     async (editor: vscode.TextEditor, _: vscode.TextEditorEdit, ...args: any[])=>{
       const action = await loadAction(editor.document, args);
       if (action){
-        //must initiate a new edit because this method is executing asynchronously
+        const replacements:Replacement[] = [];
+        for (const selection of editor.selections){
+          replacements.push(new Replacement(selection, await action.apply(editor.document.getText(selection))));
+        }
         if (!await editor.edit(
-          (edit:vscode.TextEditorEdit) => {
-            for (const selection of editor.selections){
-              edit.replace(selection, action.apply(editor.document.getText(selection)))
+          (editBuilder:vscode.TextEditorEdit) => {
+            for (const r of replacements){
+              editBuilder.replace(r.range, r.text);
             }
           }
         )){
@@ -312,52 +594,24 @@ export function activate(context: vscode.ExtensionContext) {
   ));
   context.subscriptions.push(vscode.commands.registerTextEditorCommand("regexp.modify.document",
     async (editor: vscode.TextEditor, _: vscode.TextEditorEdit, ...args: any[])=>{
-      const action = await loadAction(editor.document, args);
-      if (action){
-        const doc = editor.document;
-        const lastLine = doc.lineCount-1;
-        const r = new vscode.Range(0, 0, lastLine, doc.lineAt(lastLine).rangeIncludingLineBreak.end.character);
-        const str = action.apply(doc.getText());
-        //must initiate a new edit because this method is executing asynchronously
-        if (!await editor.edit(
-          (edit:vscode.TextEditorEdit) => {
-            edit.replace(r, str);
-          }
-        )){
-          await vscode.window.showInformationMessage("Operation failed.");
-        }
+      const doc = editor.document;
+      const action = await loadAction(doc, args);
+      if (action && !await action.applyToEditor(editor)){
+        await vscode.window.showInformationMessage("Operation failed.");
       }
     }
   ));
   context.subscriptions.push(vscode.commands.registerCommand("regexp.modify.documents",
     async (...args: any[])=>{
-
+      //TODO
     }
   ));
   context.subscriptions.push(vscode.commands.registerCommand("regexp.modify.workspaces",
     async (...args: any[])=>{
-
+      //TODO
     }
   ));
-
   /*
-  context.subscriptions.push(vscode.commands.registerTextEditorCommand('replacerules.runRule', runSingleRule));
-  context.subscriptions.push(vscode.commands.registerTextEditorCommand('replacerules.runRuleset', runRuleset));
-  context.subscriptions.push(vscode.commands.registerTextEditorCommand('replacerules.pasteAndReplace', pasteReplace));
-  context.subscriptions.push(vscode.commands.registerCommand('replacerules.stringifyRegex', stringifyRegex));
-
-    how to get configuration properties for this extension {
-      vscode.workspace.getConfiguration("RegExp", scope?: Uri | TextDocument): WorkspaceConfiguration
-      configObject["label"] to access the regex list with the given label
-      scope specifies where to get the configuration from; probably use TextDocument
-      might have to directly use vscode.workspace.fs to edit files if openTextDocument() doesn't work as expected
-    }
-    
-    use these methods to read and write clipboard contents {
-      vscode.env.clipboard.readText(): Thenable<string>
-      vscode.env.clipboard.writeText(value: string): Thenable<void>
-    }
-
     how to get TextDocument objects {
       get all available text documents
         vscode.workspace.textDocuments: TextDocument[]
@@ -380,7 +634,6 @@ export function activate(context: vscode.ExtensionContext) {
       queue an edit action which replaces a range in the given Uri with newText
         WorkspaceEdit.replace(uri: Uri, range: Range, newText: string): void
     }
-
   */
 }
 export function deactivate(){}
