@@ -57,9 +57,7 @@ class Templates {
           return this.resource?path.dirname(this.resource.fsPath):"";
         }
         case "relativeFileDirname":{
-          if (!this.resource){ return ""; }
-          const v = vscode.workspace.getWorkspaceFolder(this.resource)?.uri.fsPath;
-          return v?path.relative(v, path.dirname(this.resource.fsPath)):"";
+          return this.resource?path.basename(path.dirname(this.resource.fsPath)):"";
         }
         case "fileBasename":{
           return this.resource?path.basename(this.resource.fsPath):"";
@@ -91,7 +89,36 @@ class Templates {
           return vscode.version;
         }
         case "defaultBuildTask":{
-          //TODO
+          /* TODO
+            get the default build task
+            add toUpperCase and toLowerCase transforms for replacements
+              $L makes everything after it lowercase
+              $U makes everything after it uppercase
+              $R resets both flags
+              these flags do not recurse down into ${} func calls
+            add way to invoke further replacements on subexpressions
+              ${regexp:name:text}
+              make $ escape } so that } can be included in text if necessary
+            make replace property optional in settings (default to the empty string)
+            make command that takes input text and args, returning the replaced text without editing any files
+            add command to take text from one file and place it in another
+              params
+                file = path to input file
+                outFileGlob = specifies many output files
+                  use additional properties to filter files as well
+                  maybe list of RegExp find strings that all must match each filename
+                inMatcher = RegExp find string
+                outMatcher = RegExp find string
+                replace = replacement string
+              use the inMatcher on file contents and retrieve the first RegExpMatchArray
+              for each outFile matching the glob, loops through all outMatcher matches
+              combine the RegExpMatchArrays from the inMatcher and outMatcher
+                e.g, add the numbered outMatcher groups after the inMatcher numbered groups
+                combine the named capturing groups when possible
+              use the replacement string with this combo RegExpMatchArray
+                the given resource Uri should be from the outFile
+              
+          */
           
         }
         default:{
@@ -161,7 +188,7 @@ class FindReplace {
    * This method formats a replacement string based on the data from a given RegExp match.
    */
   public async format(match:RegExpMatchArray, templates:Templates):Promise<string> {
-    if (this.literal){
+    if (this.literal || this.replace.length==0){
       return this.replace;
     }
     const len = this.replace.length;
